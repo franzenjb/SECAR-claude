@@ -34,7 +34,7 @@ async function fetchWeatherConditions() {
             }
         }
         
-        // Get tropical outlook
+        // Get tropical outlook from NWS/NOAA sources
         conditions.tropical = await getTropicalOutlook();
         
     } catch (error) {
@@ -165,209 +165,155 @@ function getSeasonalConditions(state, isHotSeason) {
 
 async function getTropicalOutlook() {
     try {
-        console.log('Fetching REAL NHC Tropical Weather Outlook...');
+        console.log('Fetching tropical outlook from NWS/NOAA sources...');
         
-        // Method 1: Try official JSON API with better headers
+        // Method 1: NWS Tropical Weather Outlook Text Products
         try {
-            console.log('Trying NHC JSON API...');
-            const response = await fetch('https://www.nhc.noaa.gov/gtwo.php?basin=atlc&fmt=json', {
+            console.log('Trying NWS Tropical Weather Outlook products...');
+            const response = await fetch('https://api.weather.gov/products/types/MIATWO', {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)',
-                    'Accept': 'application/json, text/plain, */*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
+                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
+                    'Accept': 'application/json'
                 }
             });
             
             if (response.ok) {
                 const data = await response.json();
-                console.log('NHC JSON response:', JSON.stringify(data, null, 2));
+                console.log('NWS TWO products received:', data['@graph']?.length || 0, 'products');
                 
-                if (data && data.areas && data.areas.length > 0) {
-                    let maxChance = 0;
-                    let outlookText = '';
-                    let disturbanceCount = 0;
+                if (data['@graph'] && data['@graph'].length > 0) {
+                    // Get the most recent tropical weather outlook
+                    const latestOutlook = data['@graph'][0];
                     
-                    data.areas.forEach((area, index) => {
-                        disturbanceCount++;
-                        console.log(`Processing disturbance ${index + 1}:`, area);
-                        
-                        // Extract formation chances
-                        if (area.chance7day) {
-                            const chance7 = parseInt(area.chance7day.replace('%', '')) || 0;
-                            maxChance = Math.max(maxChance, chance7);
-                        }
-                        
-                        if (area.chance2day) {
-                            const chance2 = parseInt(area.chance2day.replace('%', '')) || 0;
-                            maxChance = Math.max(maxChance, chance2);
-                        }
-                        
-                        // Build comprehensive outlook text
-                        if (area.text) {
-                            outlookText += `Disturbance ${index + 1}: ${area.text} `;
+                    // Fetch the actual product text
+                    const productResponse = await fetch(latestOutlook['@id'], {
+                        headers: {
+                            'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
+                            'Accept': 'application/json'
                         }
                     });
                     
-                    if (maxChance > 0) {
-                        return {
-                            outlook: outlookText.trim() || `The National Hurricane Center is monitoring ${disturbanceCount} disturbance(s) in the Atlantic basin for potential tropical development.`,
-                            formation_chance: `${maxChance}%`
-                        };
+                    if (productResponse.ok) {
+                        const productData = await productResponse.json();
+                        return parseNWSTropicalOutlook(productData.productText);
                     }
                 }
-            } else {
-                console.log(`NHC JSON API returned ${response.status}: ${response.statusText}`);
             }
-        } catch (jsonError) {
-            console.log('NHC JSON API failed:', jsonError.message);
+        } catch (error) {
+            console.log('NWS TWO failed:', error.message);
         }
 
-        // Method 2: Try scraping the HTML outlook page
+        // Method 2: NWS Tropical Alerts
         try {
-            console.log('Trying NHC HTML page scraping...');
-            const response = await fetch('https://www.nhc.noaa.gov/gtwo_atl.php', {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                }
-            });
+            console.log('Trying NWS tropical alerts...');
+            const tropicalEvents = [
+                'Tropical Storm Watch', 'Tropical Storm Warning',
+                'Hurricane Watch', 'Hurricane Warning',
+                'Tropical Depression', 'Tropical Cyclone'
+            ];
             
-            if (response.ok) {
-                const htmlText = await response.text();
-                console.log('NHC HTML page length:', htmlText.length);
-                
-                // Look for formation percentages in HTML
-                const percentageRegex = /(\d+)\s*percent/gi;
-                const formationRegex = /formation.*?(\d+)\s*percent/gi;
-                const disturbanceRegex = /disturbance\s*\d+.*?(\d+)\s*percent/gi;
-                
-                let maxPercentage = 0;
-                let foundText = '';
-                
-                // Try different regex patterns
-                const patterns = [formationRegex, disturbanceRegex, percentageRegex];
-                
-                patterns.forEach(pattern => {
-                    let match;
-                    while ((match = pattern.exec(htmlText)) !== null) {
-                        const percentage = parseInt(match[1]);
-                        if (percentage > maxPercentage) {
-                            maxPercentage = percentage;
-                            // Extract surrounding context
-                            const startIndex = Math.max(0, match.index - 200);
-                            const endIndex = Math.min(htmlText.length, match.index + 200);
-                            foundText = htmlText.substring(startIndex, endIndex).replace(/<[^>]*>/g, '').trim();
-                        }
-                    }
-                });
-                
-                if (maxPercentage > 0) {
-                    return {
-                        outlook: foundText || `The National Hurricane Center reports tropical development chances in the Atlantic basin.`,
-                        formation_chance: `${maxPercentage}%`
-                    };
-                }
-            }
-        } catch (htmlError) {
-            console.log('NHC HTML scraping failed:', htmlError.message);
-        }
-
-        // Method 3: Try RSS feed
-        try {
-            console.log('Trying NHC RSS feed...');
-            const response = await fetch('https://www.nhc.noaa.gov/index-at.xml', {
+            const eventQuery = tropicalEvents.join(',');
+            const response = await fetch(`https://api.weather.gov/alerts?event=${encodeURIComponent(eventQuery)}`, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)',
-                    'Accept': 'application/rss+xml, application/xml, text/xml'
-                }
-            });
-            
-            if (response.ok) {
-                const xmlText = await response.text();
-                console.log('RSS feed received, length:', xmlText.length);
-                
-                // Parse RSS for tropical outlook
-                const itemRegex = /<item>[\s\S]*?<\/item>/gi;
-                const titleRegex = /<title[^>]*>(.*?)<\/title>/i;
-                const descRegex = /<description[^>]*>(.*?)<\/description>/i;
-                
-                let maxPercentage = 0;
-                let outlookText = '';
-                
-                let match;
-                while ((match = itemRegex.exec(xmlText)) !== null) {
-                    const item = match[0];
-                    
-                    // Check if this is a tropical outlook item
-                    if (item.toLowerCase().includes('tropical') || item.toLowerCase().includes('outlook')) {
-                        const titleMatch = titleRegex.exec(item);
-                        const descMatch = descRegex.exec(item);
-                        
-                        if (descMatch) {
-                            const description = descMatch[1].replace(/<[^>]*>/g, '').trim();
-                            
-                            // Look for percentages
-                            const percentMatches = description.match(/(\d+)\s*percent/gi);
-                            if (percentMatches) {
-                                percentMatches.forEach(percentMatch => {
-                                    const num = parseInt(percentMatch.replace(/\D/g, ''));
-                                    if (num > maxPercentage) {
-                                        maxPercentage = num;
-                                        outlookText = description.substring(0, 400);
-                                    }
-                                });
-                            }
-                        }
-                    }
-                }
-                
-                if (maxPercentage > 0) {
-                    return {
-                        outlook: outlookText || 'The National Hurricane Center is monitoring tropical development in the Atlantic basin.',
-                        formation_chance: `${maxPercentage}%`
-                    };
-                }
-            }
-        } catch (rssError) {
-            console.log('RSS feed failed:', rssError.message);
-        }
-
-        // Method 4: Try Current Storms API
-        try {
-            console.log('Trying Current Storms API...');
-            const response = await fetch('https://www.nhc.noaa.gov/CurrentStorms.json', {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)'
+                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)'
                 }
             });
             
             if (response.ok) {
                 const data = await response.json();
-                console.log('Current storms data:', data);
+                console.log('Tropical alerts received:', data.features?.length || 0, 'alerts');
                 
-                if (data.activeStorms && data.activeStorms.length > 0) {
-                    const stormNames = data.activeStorms.map(storm => storm.name || 'Unnamed').join(', ');
-                    return {
-                        outlook: `The National Hurricane Center is currently tracking ${data.activeStorms.length} active system(s): ${stormNames}. Monitor official forecasts for the latest information.`,
-                        formation_chance: 'Active Systems'
-                    };
+                if (data.features && data.features.length > 0) {
+                    return processTropicalAlerts(data.features);
                 }
             }
-        } catch (stormsError) {
-            console.log('Current storms API failed:', stormsError.message);
+        } catch (error) {
+            console.log('NWS tropical alerts failed:', error.message);
         }
 
-        // Fallback with current date context
+        // Method 3: NWS Miami Area Forecast Discussion (often mentions tropical activity)
+        try {
+            console.log('Trying NWS Miami AFD...');
+            const response = await fetch('https://api.weather.gov/products/types/MIAAFDEMF', {
+                headers: {
+                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Miami AFD products received:', data['@graph']?.length || 0, 'products');
+                
+                if (data['@graph'] && data['@graph'].length > 0) {
+                    const latestAFD = data['@graph'][0];
+                    
+                    const productResponse = await fetch(latestAFD['@id'], {
+                        headers: {
+                            'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
+                            'Accept': 'application/json'
+                        }
+                    });
+                    
+                    if (productResponse.ok) {
+                        const productData = await productResponse.json();
+                        const tropicalInfo = extractTropicalFromAFD(productData.productText);
+                        if (tropicalInfo) {
+                            return tropicalInfo;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.log('Miami AFD failed:', error.message);
+        }
+
+        // Method 4: NWS High Seas Forecast (marine forecasts often mention tropical activity)
+        try {
+            console.log('Trying NWS High Seas forecast...');
+            const response = await fetch('https://api.weather.gov/products/types/MIAHSP', {
+                headers: {
+                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('High Seas products received:', data['@graph']?.length || 0, 'products');
+                
+                if (data['@graph'] && data['@graph'].length > 0) {
+                    const latestForecast = data['@graph'][0];
+                    
+                    const productResponse = await fetch(latestForecast['@id'], {
+                        headers: {
+                            'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
+                            'Accept': 'application/json'
+                        }
+                    });
+                    
+                    if (productResponse.ok) {
+                        const productData = await productResponse.json();
+                        const tropicalInfo = extractTropicalFromMarine(productData.productText);
+                        if (tropicalInfo) {
+                            return tropicalInfo;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.log('High Seas forecast failed:', error.message);
+        }
+
+        // Fallback: Hurricane season status
         const month = new Date().getMonth();
         const isHurricaneSeason = month >= 5 && month <= 10; // June-November
         
         if (isHurricaneSeason) {
-            console.log('All NHC APIs failed, using hurricane season fallback');
+            console.log('All NWS sources failed, using hurricane season message');
             return {
-                outlook: 'NHC data temporarily unavailable via automated systems. During hurricane season, formation chances can change rapidly. Visit nhc.noaa.gov for the most current tropical weather outlook and formation probabilities.',
-                formation_chance: 'Visit NHC'
+                outlook: 'National Weather Service tropical data temporarily unavailable via automated systems. During hurricane season, conditions can change rapidly and tropical development is possible.',
+                formation_chance: 'Monitor NWS'
             };
         } else {
             return {
@@ -377,11 +323,165 @@ async function getTropicalOutlook() {
         }
         
     } catch (error) {
-        console.error('All NHC data retrieval methods failed:', error);
+        console.error('All tropical data sources failed:', error);
         return {
-            outlook: 'Tropical weather outlook temporarily unavailable. Visit nhc.noaa.gov for official National Hurricane Center information.',
-            formation_chance: 'Check NHC'
+            outlook: 'Tropical weather information temporarily unavailable. Monitor local National Weather Service offices for current conditions.',
+            formation_chance: 'Check NWS'
         };
+    }
+}
+
+function parseNWSTropicalOutlook(productText) {
+    try {
+        console.log('Parsing NWS tropical outlook text...');
+        
+        // Look for formation probabilities and disturbance information
+        const lines = productText.split('\n');
+        let outlookText = '';
+        let maxFormationChance = 0;
+        
+        // Search for key tropical outlook phrases
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].toLowerCase();
+            
+            // Look for disturbance descriptions
+            if (line.includes('disturbance') || line.includes('tropical') || line.includes('development')) {
+                // Collect this line and next few lines for context
+                const contextLines = lines.slice(i, Math.min(i + 3, lines.length));
+                const contextText = contextLines.join(' ').trim();
+                
+                // Look for percentage in this context
+                const percentMatch = contextText.match(/(\d+)\s*percent/i);
+                if (percentMatch) {
+                    const percentage = parseInt(percentMatch[1]);
+                    if (percentage > maxFormationChance) {
+                        maxFormationChance = percentage;
+                        outlookText = contextText.substring(0, 300) + '...';
+                    }
+                }
+                
+                // If no percentage but good tropical content, save it
+                if (!outlookText && contextText.length > 50) {
+                    outlookText = contextText.substring(0, 300) + '...';
+                }
+            }
+        }
+        
+        if (outlookText || maxFormationChance > 0) {
+            return {
+                outlook: outlookText || 'The National Weather Service is monitoring tropical activity in the Atlantic basin.',
+                formation_chance: maxFormationChance > 0 ? `${maxFormationChance}%` : 'Low'
+            };
+        }
+        
+        return null;
+    } catch (error) {
+        console.log('Error parsing NWS tropical outlook:', error.message);
+        return null;
+    }
+}
+
+function processTropicalAlerts(alerts) {
+    try {
+        console.log('Processing tropical alerts...');
+        
+        const activeAlerts = alerts.filter(alert => 
+            new Date(alert.properties.expires) > new Date()
+        );
+        
+        if (activeAlerts.length > 0) {
+            const alertTypes = activeAlerts.map(alert => alert.properties.event).join(', ');
+            const areas = [...new Set(activeAlerts.map(alert => alert.properties.areaDesc))].join(', ');
+            
+            return {
+                outlook: `Active tropical weather alerts: ${alertTypes} affecting ${areas}. Monitor National Weather Service for updates and follow all evacuation orders.`,
+                formation_chance: 'Active System'
+            };
+        }
+        
+        return null;
+    } catch (error) {
+        console.log('Error processing tropical alerts:', error.message);
+        return null;
+    }
+}
+
+function extractTropicalFromAFD(productText) {
+    try {
+        console.log('Extracting tropical info from AFD...');
+        
+        const lines = productText.split('\n');
+        let tropicalContent = '';
+        
+        // Look for tropical-related sections
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].toLowerCase();
+            
+            if (line.includes('tropical') || line.includes('hurricane') || line.includes('depression') || line.includes('disturbance')) {
+                // Get surrounding context
+                const startIdx = Math.max(0, i - 2);
+                const endIdx = Math.min(lines.length, i + 4);
+                const context = lines.slice(startIdx, endIdx).join(' ').trim();
+                
+                if (context.length > 100) {
+                    tropicalContent = context.substring(0, 400) + '...';
+                    break;
+                }
+            }
+        }
+        
+        if (tropicalContent) {
+            // Look for formation probability
+            const percentMatch = tropicalContent.match(/(\d+)\s*percent/i);
+            const formationChance = percentMatch ? `${percentMatch[1]}%` : 'Monitor';
+            
+            return {
+                outlook: tropicalContent,
+                formation_chance: formationChance
+            };
+        }
+        
+        return null;
+    } catch (error) {
+        console.log('Error extracting tropical from AFD:', error.message);
+        return null;
+    }
+}
+
+function extractTropicalFromMarine(productText) {
+    try {
+        console.log('Extracting tropical info from marine forecast...');
+        
+        const lines = productText.split('\n');
+        let marineContent = '';
+        
+        // Look for tropical mentions in marine forecasts
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].toLowerCase();
+            
+            if (line.includes('tropical') || line.includes('cyclone') || line.includes('storm')) {
+                const startIdx = Math.max(0, i - 1);
+                const endIdx = Math.min(lines.length, i + 3);
+                const context = lines.slice(startIdx, endIdx).join(' ').trim();
+                
+                if (context.length > 80) {
+                    marineContent = context.substring(0, 300) + '...';
+                    break;
+                }
+            }
+        }
+        
+        if (marineContent) {
+            return {
+                outlook: marineContent,
+                formation_chance: 'See Marine Forecast'
+            };
+        }
+        
+        return null;
+    } catch (error) {
+        console.log('Error extracting tropical from marine forecast:', error.message);
+        return null;
     }
 }
 
@@ -452,13 +552,13 @@ function generateReport(weatherData) {
             <h4>5-Day Monitoring</h4>
             <ul>
                 <li>Monitor NWS local offices for updated <span class="warning">WARNINGS</span>, <span class="watch">WATCHES</span>, and <span class="advisory">ADVISORIES</span>.</li>
-                <li>Track NHC Tropical Weather Outlook updates for any changes in tropical development probability.</li>
+                <li>Track National Weather Service tropical weather updates for any changes in development probability.</li>
                 <li>Monitor river and stream levels in flood-prone areas, especially after heavy rainfall.</li>
                 <li>Remain alert for rapidly changing weather conditions, especially during holiday events and outdoor gatherings.</li>
             </ul>
         </div>
         
-        <div class="sources">Sources: NWS local offices, National Hurricane Center, NOAA.</div>
+        <div class="sources">Sources: NWS local offices, National Weather Service, NOAA.</div>
     `;
 
     return report;
