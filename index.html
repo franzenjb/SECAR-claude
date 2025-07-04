@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SECAR Weather Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            color: #000000;
+            background: #ffffff;
+            padding: 24px;
+            line-height: 1.6;
+            margin: 0;
+            min-height: 100vh;
+        }
+        
+        /* Experience Builder iframe optimization */
+        @media (max-width: 768px) {
+            body { padding: 15px; }
+            .header h1 { font-size: 20pt; }
+            .header p { font-size: 14pt; }
+            .btn { font-size: 12pt; padding: 8px 15px; }
+        }
+        
+        /* Ensure proper sizing in iframe */
+        html, body {
+            overflow-x: hidden;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #990000;
+        }
+        
+        .header h1 {
+            font-size: 28pt;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #990000;
+        }
+        
+        .header p {
+            font-size: 16pt;
+            margin-bottom: 15px;
+            color: #000000;
+        }
+        
+        .controls {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        
+        .btn {
+            background: #ffffff;
+            border: 2px solid #990000;
+            padding: 12px 24px;
+            font-family: Arial, sans-serif;
+            font-size: 14pt;
+            color: #990000;
+            cursor: pointer;
+            margin: 0 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn:hover {
+            background: #990000;
+            color: #ffffff;
+        }
+        
+        .update-info {
+            text-align: center;
+            margin-bottom: 20px;
+            font-style: italic;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .report-container {
+            background: #ffffff;
+            min-height: 400px;
+        }
+        
+        .report-text {
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            color: #000000;
+            line-height: 1.6;
+        }
+        
+        .timestamp {
+            text-align: right;
+            font-size: 12pt;
+            margin-top: 15px;
+            font-style: italic;
+            color: #666;
+        }
+        
+        /* Weather report specific styling */
+        .date-range {
+            color: #990000;
+            font-weight: bold;
+            font-size: 18px;
+            margin: 20px 0;
+        }
+        
+        .tropical-outlook {
+            background-color: #f0e8e4;
+            border-left: 4px solid #7a1d1d;
+            padding: 15px;
+            margin-bottom: 25px;
+        }
+        
+        .tropical-outlook h3 {
+            color: #7a1d1d;
+            font-weight: bold;
+            font-size: 18px;
+            margin: 0 0 10px;
+        }
+        
+        .formation-chance {
+            text-align: center;
+            margin-top: 15px;
+        }
+        
+        .formation-badge {
+            display: inline-block;
+            background-color: #7a1d1d;
+            color: #ffffff;
+            padding: 8px 16px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        
+        .formation-percentage {
+            font-size: 24px;
+        }
+        
+        .section-title {
+            color: #990000;
+            font-weight: bold;
+            font-size: 18px;
+            margin: 25px 0 15px;
+        }
+        
+        .state-report {
+            margin-bottom: 18px;
+        }
+        
+        .state-name {
+            font-weight: bold;
+            color: #000000;
+        }
+        
+        .state-conditions {
+            color: #000000;
+            margin-left: 0;
+        }
+        
+        /* Weather alert styling */
+        .warning {
+            color: #cc0000;
+            font-weight: bold;
+        }
+        
+        .watch {
+            color: #e67300;
+            font-weight: bold;
+        }
+        
+        .advisory {
+            color: #ffcc00;
+            font-weight: bold;
+            background-color: #000;
+            padding: 1px 3px;
+            border-radius: 2px;
+        }
+        
+        .recommendations {
+            margin-top: 30px;
+        }
+        
+        .recommendations h4 {
+            color: #990000;
+            font-weight: bold;
+            margin: 20px 0 10px;
+        }
+        
+        .recommendations ul {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .recommendations li {
+            margin-bottom: 8px;
+        }
+        
+        .sources {
+            color: #000000;
+            font-size: 14px;
+            margin-top: 25px;
+            font-style: italic;
+        }
+        
+        .weather-check-time {
+            color: #000000;
+            font-style: italic;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SECAR Weather Report</h1>
+        <p>Southeast Coordination and Regional Outlook</p>
+        <div id="lastUpdated" class="timestamp">Loading...</div>
+    </div>
+    
+    <div class="controls">
+        <button class="btn" onclick="window.location.reload()">Refresh Page</button>
+        <button class="btn" onclick="copyReport()">Copy Report</button>
+    </div>
+    
+    <div class="update-info">
+        Weather data automatically updated every 6 hours via GitHub Actions
+    </div>
+    
+    <div class="report-container">
+        <div id="reportOutput" class="report-text">
+            <div style="text-align: center; padding: 40px; font-style: italic; color: #666;">
+                Loading current weather conditions...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function copyReport() {
+            // Create a temporary element to get clean text version
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = document.getElementById('reportOutput').innerHTML;
+            
+            // Remove HTML tags for plain text copy
+            const reportText = tempDiv.textContent || tempDiv.innerText || '';
+            
+            navigator.clipboard.writeText(reportText).then(() => {
+                alert('Report copied to clipboard!');
+            }).catch(err => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = reportText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('Report copied to clipboard!');
+            });
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Notify parent frame of content load (for Experience Builder)
+            if (window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'secar-weather-loaded',
+                    height: document.body.scrollHeight
+                }, '*');
+            }
+        });
+        
+        // Handle resize for Experience Builder responsiveness
+        window.addEventListener('resize', function() {
+            if (window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'secar-weather-resize',
+                    height: document.body.scrollHeight
+                }, '*');
+            }
+        });
+    </script>
+</body>
+</html>
