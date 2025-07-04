@@ -167,111 +167,179 @@ async function getTropicalOutlook() {
     try {
         console.log('Fetching REAL NHC Tropical Weather Outlook...');
         
-        // Try the official NHC Tropical Weather Outlook JSON first
+        // Method 1: Try official JSON API with better headers
         try {
+            console.log('Trying NHC JSON API...');
             const response = await fetch('https://www.nhc.noaa.gov/gtwo.php?basin=atlc&fmt=json', {
                 headers: {
-                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)',
-                    'Accept': 'application/json'
+                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
                 }
             });
             
             if (response.ok) {
                 const data = await response.json();
-                console.log('NHC JSON data received:', JSON.stringify(data, null, 2));
+                console.log('NHC JSON response:', JSON.stringify(data, null, 2));
                 
                 if (data && data.areas && data.areas.length > 0) {
-                    let maxChance2Day = 0;
-                    let maxChance7Day = 0;
+                    let maxChance = 0;
                     let outlookText = '';
+                    let disturbanceCount = 0;
                     
                     data.areas.forEach((area, index) => {
-                        console.log(`Area ${index + 1}:`, area);
+                        disturbanceCount++;
+                        console.log(`Processing disturbance ${index + 1}:`, area);
                         
-                        // Extract 2-day and 7-day formation chances
-                        if (area.chance2day) {
-                            const chance2 = parseInt(area.chance2day.replace('%', '')) || 0;
-                            maxChance2Day = Math.max(maxChance2Day, chance2);
-                        }
-                        
+                        // Extract formation chances
                         if (area.chance7day) {
                             const chance7 = parseInt(area.chance7day.replace('%', '')) || 0;
-                            maxChance7Day = Math.max(maxChance7Day, chance7);
+                            maxChance = Math.max(maxChance, chance7);
                         }
                         
-                        // Build outlook text
+                        if (area.chance2day) {
+                            const chance2 = parseInt(area.chance2day.replace('%', '')) || 0;
+                            maxChance = Math.max(maxChance, chance2);
+                        }
+                        
+                        // Build comprehensive outlook text
                         if (area.text) {
-                            outlookText += area.text + ' ';
+                            outlookText += `Disturbance ${index + 1}: ${area.text} `;
                         }
                     });
                     
-                    const formationChance = maxChance7Day > 0 ? `${maxChance7Day}%` : 
-                                          maxChance2Day > 0 ? `${maxChance2Day}%` : '0%';
-                    
+                    if (maxChance > 0) {
+                        return {
+                            outlook: outlookText.trim() || `The National Hurricane Center is monitoring ${disturbanceCount} disturbance(s) in the Atlantic basin for potential tropical development.`,
+                            formation_chance: `${maxChance}%`
+                        };
+                    }
+                }
+            } else {
+                console.log(`NHC JSON API returned ${response.status}: ${response.statusText}`);
+            }
+        } catch (jsonError) {
+            console.log('NHC JSON API failed:', jsonError.message);
+        }
+
+        // Method 2: Try scraping the HTML outlook page
+        try {
+            console.log('Trying NHC HTML page scraping...');
+            const response = await fetch('https://www.nhc.noaa.gov/gtwo_atl.php', {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                }
+            });
+            
+            if (response.ok) {
+                const htmlText = await response.text();
+                console.log('NHC HTML page length:', htmlText.length);
+                
+                // Look for formation percentages in HTML
+                const percentageRegex = /(\d+)\s*percent/gi;
+                const formationRegex = /formation.*?(\d+)\s*percent/gi;
+                const disturbanceRegex = /disturbance\s*\d+.*?(\d+)\s*percent/gi;
+                
+                let maxPercentage = 0;
+                let foundText = '';
+                
+                // Try different regex patterns
+                const patterns = [formationRegex, disturbanceRegex, percentageRegex];
+                
+                patterns.forEach(pattern => {
+                    let match;
+                    while ((match = pattern.exec(htmlText)) !== null) {
+                        const percentage = parseInt(match[1]);
+                        if (percentage > maxPercentage) {
+                            maxPercentage = percentage;
+                            // Extract surrounding context
+                            const startIndex = Math.max(0, match.index - 200);
+                            const endIndex = Math.min(htmlText.length, match.index + 200);
+                            foundText = htmlText.substring(startIndex, endIndex).replace(/<[^>]*>/g, '').trim();
+                        }
+                    }
+                });
+                
+                if (maxPercentage > 0) {
                     return {
-                        outlook: outlookText.trim() || 'The National Hurricane Center is monitoring the Atlantic basin for tropical development.',
-                        formation_chance: formationChance
+                        outlook: foundText || `The National Hurricane Center reports tropical development chances in the Atlantic basin.`,
+                        formation_chance: `${maxPercentage}%`
                     };
                 }
             }
-        } catch (error) {
-            console.log('NHC JSON failed:', error.message);
+        } catch (htmlError) {
+            console.log('NHC HTML scraping failed:', htmlError.message);
         }
-        
-        // Fallback: Try the RSS feed approach
+
+        // Method 3: Try RSS feed
         try {
+            console.log('Trying NHC RSS feed...');
             const response = await fetch('https://www.nhc.noaa.gov/index-at.xml', {
                 headers: {
-                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)'
+                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)',
+                    'Accept': 'application/rss+xml, application/xml, text/xml'
                 }
             });
             
             if (response.ok) {
                 const xmlText = await response.text();
-                console.log('RSS XML received, length:', xmlText.length);
+                console.log('RSS feed received, length:', xmlText.length);
                 
-                // Look for tropical outlook in RSS
-                const outlookMatch = xmlText.match(/<title[^>]*>.*?(tropical|outlook).*?<\/title>/gi);
-                const descMatch = xmlText.match(/<description[^>]*>(.*?)<\/description>/gi);
+                // Parse RSS for tropical outlook
+                const itemRegex = /<item>[\s\S]*?<\/item>/gi;
+                const titleRegex = /<title[^>]*>(.*?)<\/title>/i;
+                const descRegex = /<description[^>]*>(.*?)<\/description>/i;
                 
-                if (descMatch && descMatch.length > 0) {
-                    // Parse all descriptions for formation chances
-                    let maxPercent = 0;
-                    let outlookText = '';
+                let maxPercentage = 0;
+                let outlookText = '';
+                
+                let match;
+                while ((match = itemRegex.exec(xmlText)) !== null) {
+                    const item = match[0];
                     
-                    descMatch.forEach(desc => {
-                        const cleanDesc = desc.replace(/<[^>]*>/g, '').trim();
+                    // Check if this is a tropical outlook item
+                    if (item.toLowerCase().includes('tropical') || item.toLowerCase().includes('outlook')) {
+                        const titleMatch = titleRegex.exec(item);
+                        const descMatch = descRegex.exec(item);
                         
-                        // Look for percentage patterns
-                        const percentMatches = cleanDesc.match(/(\d+)\s*%/g);
-                        if (percentMatches) {
-                            percentMatches.forEach(match => {
-                                const num = parseInt(match.replace('%', ''));
-                                if (num > maxPercent) {
-                                    maxPercent = num;
-                                    outlookText = cleanDesc.substring(0, 400); // Keep relevant text
-                                }
-                            });
+                        if (descMatch) {
+                            const description = descMatch[1].replace(/<[^>]*>/g, '').trim();
+                            
+                            // Look for percentages
+                            const percentMatches = description.match(/(\d+)\s*percent/gi);
+                            if (percentMatches) {
+                                percentMatches.forEach(percentMatch => {
+                                    const num = parseInt(percentMatch.replace(/\D/g, ''));
+                                    if (num > maxPercentage) {
+                                        maxPercentage = num;
+                                        outlookText = description.substring(0, 400);
+                                    }
+                                });
+                            }
                         }
-                    });
-                    
-                    if (maxPercent > 0 || outlookText) {
-                        return {
-                            outlook: outlookText || 'The National Hurricane Center is monitoring disturbances in the Atlantic basin.',
-                            formation_chance: maxPercent > 0 ? `${maxPercent}%` : '0%'
-                        };
                     }
                 }
+                
+                if (maxPercentage > 0) {
+                    return {
+                        outlook: outlookText || 'The National Hurricane Center is monitoring tropical development in the Atlantic basin.',
+                        formation_chance: `${maxPercentage}%`
+                    };
+                }
             }
-        } catch (error) {
-            console.log('RSS feed failed:', error.message);
+        } catch (rssError) {
+            console.log('RSS feed failed:', rssError.message);
         }
-        
-        // Final fallback: Try current storms API
+
+        // Method 4: Try Current Storms API
         try {
+            console.log('Trying Current Storms API...');
             const response = await fetch('https://www.nhc.noaa.gov/CurrentStorms.json', {
                 headers: {
-                    'User-Agent': 'SECAR-Weather-Report (github.com/franzenjb/SECAR-claude)'
+                    'User-Agent': 'Mozilla/5.0 (compatible; SECAR-Weather-Report)'
                 }
             });
             
@@ -287,18 +355,19 @@ async function getTropicalOutlook() {
                     };
                 }
             }
-        } catch (error) {
-            console.log('Current storms failed:', error.message);
+        } catch (stormsError) {
+            console.log('Current storms API failed:', stormsError.message);
         }
-        
-        // If all else fails, check if it's hurricane season
+
+        // Fallback with current date context
         const month = new Date().getMonth();
         const isHurricaneSeason = month >= 5 && month <= 10; // June-November
         
         if (isHurricaneSeason) {
+            console.log('All NHC APIs failed, using hurricane season fallback');
             return {
-                outlook: 'Unable to retrieve current formation probabilities from NHC APIs. The National Hurricane Center continues to monitor the Atlantic basin. Visit nhc.noaa.gov for the most current tropical weather outlook.',
-                formation_chance: 'Check NHC'
+                outlook: 'NHC data temporarily unavailable via automated systems. During hurricane season, formation chances can change rapidly. Visit nhc.noaa.gov for the most current tropical weather outlook and formation probabilities.',
+                formation_chance: 'Visit NHC'
             };
         } else {
             return {
@@ -308,10 +377,10 @@ async function getTropicalOutlook() {
         }
         
     } catch (error) {
-        console.error('All NHC data sources failed:', error);
+        console.error('All NHC data retrieval methods failed:', error);
         return {
-            outlook: 'Tropical weather outlook temporarily unavailable. Visit nhc.noaa.gov for official information.',
-            formation_chance: 'Visit NHC'
+            outlook: 'Tropical weather outlook temporarily unavailable. Visit nhc.noaa.gov for official National Hurricane Center information.',
+            formation_chance: 'Check NHC'
         };
     }
 }
