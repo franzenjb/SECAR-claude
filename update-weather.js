@@ -480,26 +480,21 @@ async function updateHtmlFile() {
         
         console.log('Generating report...');
         const reportHtml = generateReport(weatherData);
-        const updateTime = new Date().toLocaleString();
         
         // Read the current HTML template
         const htmlTemplate = fs.readFileSync('index.html', 'utf8');
         
-        // Replace the loading div with actual weather data
+        // Replace the loading div with actual weather data (NO TIMESTAMP ADDED)
         const updatedHtml = htmlTemplate
             .replace(
                 /<div id="reportOutput" class="report-text">[\s\S]*?<\/div>/,
                 `<div id="reportOutput" class="report-text">${reportHtml}</div>`
-            )
-            .replace(
-                /Loading\.\.\./,
-                `Last Updated: ${updateTime}`
             );
         
         // Write the updated HTML back to file
         fs.writeFileSync('index.html', updatedHtml);
         
-        console.log('Weather report updated successfully at', updateTime);
+        console.log('Weather report updated successfully');
         
     } catch (error) {
         console.error('Error updating weather report:', error);
